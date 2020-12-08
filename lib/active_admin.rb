@@ -50,6 +50,7 @@ module ActiveAdmin
   autoload :Scope,                    'active_admin/scope'
   autoload :ScopeChain,               'active_admin/helpers/scope_chain'
   autoload :SidebarSection,           'active_admin/sidebar_section'
+  autoload :StandardLoader,           'active_admin/standard_loader'
   autoload :TableBuilder,             'active_admin/table_builder'
   autoload :ViewFactory,              'active_admin/view_factory'
   autoload :ViewHelpers,              'active_admin/view_helpers'
