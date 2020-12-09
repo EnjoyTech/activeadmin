@@ -1,5 +1,6 @@
 require "active_admin/application_settings"
 require "active_admin/namespace_settings"
+require 'active_admin/dynamic_loader'
 require 'active_admin/standard_loader'
 
 module ActiveAdmin
@@ -59,8 +60,15 @@ module ActiveAdmin
       ActiveSupport::Notifications.publish AfterLoadEvent, self
     end
 
+    def dynamic_loading_enabled?
+      return @dynamic_loading_enabled if defined? @dynamic_loading_enabled
+
+      @dynamic_loading_enabled = ENV["USE_AA_DYNAMIC_LOADING"].present? &&
+        (Rails.env.development? || Rails.env.test?)
+    end
+
     def loader
-      @loader ||= StandardLoader.new(self)
+      @loader ||= dynamic_loading_enabled? ? DynamicLoader.new(self) : StandardLoader.new(self)
     end
 
     # Runs before the app's AA initializer
@@ -131,9 +139,19 @@ module ActiveAdmin
       @@loaded = false
     end
 
+    def ensure_loaded!
+      load! unless loaded?
+    end
+
     # Returns ALL the files to be loaded
     def files
       load_paths.flatten.compact.uniq.flat_map { |path| Dir["#{path}/**/*.rb"] }.sort
+    end
+
+    # Used only with dynamic loader (does nothing for standard lodaer) to ensure
+    # that certain files are always loaded.
+    def ensure_always_loaded(*files)
+      loader.ensure_always_loaded(*files) if dynamic_loading_enabled?
     end
 
     # Creates all the necessary routes for the ActiveAdmin configurations

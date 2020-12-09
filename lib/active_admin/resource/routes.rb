@@ -47,13 +47,15 @@ module ActiveAdmin
           @resource = resource
         end
 
-        def collection_path(params, additional_params = {})
-          route_name = route_name(
+        def collection_path_name
+          route_name(
             resource.resources_configuration[:self][:route_collection_name],
             suffix: (resource.route_uncountable? ? "index_path" : "path")
           )
+        end
 
-          routes.public_send route_name, *route_collection_params(params), additional_params
+        def collection_path(params, additional_params = {})
+          routes.public_send collection_path_name, *route_collection_params(params), additional_params
         end
 
         def batch_action_path(params, additional_params = {})
@@ -111,6 +113,14 @@ module ActiveAdmin
             [instance.public_send(belongs_to_target_name).to_param, instance.to_param]
           else
             instance.to_param
+          end
+        end
+
+        def route_collection_param_names
+          if nested?
+            [:"#{belongs_to_name}_id"]
+          else
+            []
           end
         end
 

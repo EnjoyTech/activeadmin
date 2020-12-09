@@ -35,6 +35,8 @@ module ActiveAdmin
 
     attr_reader :application, :resources, :menus
 
+    delegate :dynamic_loading_enabled?, to: :application
+
     def initialize(application, name)
       @application = application
       @name = name.to_s.underscore
@@ -122,8 +124,8 @@ module ActiveAdmin
       @menus.fetch(name)
     end
 
-    def reset_menu!
-      @menus.clear!
+    def reset_menu!(force_for_dynamic_loading: false)
+      @menus.clear! if !dynamic_loading_enabled? || force_for_dynamic_loading
     end
 
     # Add a callback to be ran when we build the menu

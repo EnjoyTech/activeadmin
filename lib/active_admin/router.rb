@@ -13,6 +13,21 @@ module ActiveAdmin
       define_resources_routes
     end
 
+    # Exposes ability to apply a single resource publicly so that DynamicLoader can use it
+    # as part of the process of comparing routes pre/post code change for resource whose file
+    # has changed.
+    def apply_resource(resource)
+      # When DynamicLoader is being used, sets the resource context, which is needed
+      # to track which routes belong to which resources for later comparison.
+      if ActiveAdmin.application.dynamic_loading_enabled?
+        router.set_resource_context(resource) do
+          define_resource_routes(resource)
+        end
+      else
+        define_resource_routes(resource)
+      end
+    end
+
     private
 
     def define_root_routes
@@ -31,7 +46,7 @@ module ActiveAdmin
     def define_resources_routes
       resources = namespaces.flat_map { |n| n.resources.values }
       resources.each do |config|
-        define_resource_routes(config)
+        apply_resource(config)
       end
     end
 
