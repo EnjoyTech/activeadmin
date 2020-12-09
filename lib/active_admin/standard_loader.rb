@@ -12,6 +12,8 @@ module ActiveAdmin
     # Loads all ruby files that are within the load_paths setting.
     # To reload everything simply call `ActiveAdmin.unload!`
     def load!
+      return if application.delay_loading?
+
       unless application.loaded?
         # before_load hook
         application.publish_before_load_event_notification!
@@ -27,6 +29,8 @@ module ActiveAdmin
     end
 
     def routes(rails_router)
+      return if application.delay_loading?
+
       load!
       ActiveAdmin::Router.new(router: rails_router, namespaces: application.namespaces).apply
     end
