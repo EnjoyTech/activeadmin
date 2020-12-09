@@ -42,6 +42,33 @@ RSpec.shared_examples_for "ActiveAdmin::Resource" do
         expect(config.menu_item_options[:label]).to eq("Hello")
       end
 
+      context "when using dynamic loading" do
+        before {
+          allow(ActiveAdmin.application).to receive(:dynamic_loading_enabled?).and_return(true)
+        }
+
+        it "initializes a new menu item with defaults" do
+          expect(config.menu_item_options[:label]).to eq(config.plural_resource_label)
+        end
+
+        it "initialize a new menu item with custom options" do
+          config.menu_item_options = { label: "Hello" }
+          expect(config.menu_item_options[:label]).to eq("Hello")
+        end
+      end
+
+    end
+
+    describe "#provided_menu_options" do
+      it "returns nil when no options are provided" do
+        expect(config.provided_menu_options).to be nil
+      end
+
+      it "returns provided options when they are set" do
+        options = { label: "Hello" }
+        config.menu_item_options = options
+        expect(config.provided_menu_options).to eq(options)
+      end
     end
 
     describe "#include_in_menu?" do
