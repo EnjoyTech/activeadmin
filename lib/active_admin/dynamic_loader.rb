@@ -71,6 +71,8 @@ module ActiveAdmin
 
     # Load all files while tracking controller source files and menu options.
     def load!
+      return if application.delay_loading?
+
       application.unload! # since app may be in partially loaded state, must unload everything first
       @controller_source_files = {}
       @resource_menu_item_options = {}
@@ -93,6 +95,8 @@ module ActiveAdmin
     end
 
     def load_changed_files_since_last_load!
+      return if application.delay_loading?
+
       file_loaded_at_times.each do |file, last_loaded_at|
         # since loading a file can trigger a full load in some cases, recheck loaded?
         # for each file
@@ -104,6 +108,8 @@ module ActiveAdmin
     end
 
     def load_always_loaded_files!
+      return if application.delay_loading?
+
       @always_loaded_files.each do |file|
         log("Loading always-load file #{file}.")
         load_single_file(file)
@@ -114,6 +120,8 @@ module ActiveAdmin
     # by @dynamic_proxy_router, then replay them. If not, do a full load, save and instantly
     # replay them.
     def routes(rails_router)
+      return if application.delay_loading?
+
       if @dynamic_proxy_router.nil?
         load!
 
@@ -138,6 +146,8 @@ module ActiveAdmin
 
     # Force a full and immediate reload of all files due to menu change, route change, etc.
     def force_full_reset!
+      return if application.delay_loading?
+
       log("Full AA reset initiated")
 
       application.unload!
@@ -162,6 +172,8 @@ module ActiveAdmin
 
     # Load an individual file for whatever reason (changed, accessed when not loaded, etc.)
     def load_single_file(file)
+      return if application.delay_loading?
+
       application.publish_before_load_event_notification!
 
       clear_file_references(file)

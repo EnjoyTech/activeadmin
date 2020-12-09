@@ -47,6 +47,21 @@ RSpec.describe ActiveAdmin::Application do
     end
   end
 
+  describe "#delay_loading?" do
+    context "when delay loading ENV variable is set" do
+      it "should return true" do
+        allow(ENV).to receive(:[]).with("USE_AA_DELAYED_LOADING").and_return("true")
+        expect(application.delay_loading?).to be true
+      end
+    end
+
+    context "when delay loading ENV variable is not set" do
+      it "should return false" do
+        expect(application.delay_loading?).to be false
+      end
+    end
+  end
+
   it "should store the site's title" do
     expect(application.site_title).to eq ""
   end

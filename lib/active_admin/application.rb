@@ -146,8 +146,44 @@ module ActiveAdmin
       @@loaded = false
     end
 
-    def ensure_loaded!
+    # When using dynamic loading, this can be called to explicitly ensure everything is loaded.
+    # It might be used before poking into ActiveAdmin's resource configs, for instance.
+    #
+    # This method is similar but not the same as ensure_loading_is_activated! Calling
+    # ensure_fully_loaded! will make sure both routes and all resources are currently loaded.
+    # Calling ensure_loading_is_activated! will make sure only that routes are currently
+    # loaded, which may or may not require all resources to be loaded if the dynamic
+    # loader is being used.
+    def ensure_fully_loaded!
+      ensure_loading_is_activated!
       load! unless loaded?
+    end
+
+    # When true, Active Admin does not load any files until loading is explicity
+    # activated with ensure_loading_is_activated! It will also set up a glob route in routes
+    # that activates loading with the first glob match.
+    def delay_loading?
+      return @delay_loading if defined? @delay_loading
+
+      @delay_loading = ENV["USE_AA_DELAYED_LOADING"].present? &&
+        (Rails.env.development? || Rails.env.test?)
+    end
+
+    # When loading is delayed, Active Admin does not load any files until loading is
+    # explicity activated with this method (or as a side effect of ensure_fully_loaded!).
+    # This method is called by the delayed loading route glob. It could also be called,
+    # for instance, before using any Active Admin url helpers if delayed loading is being
+    # used.
+    #
+    # It does NOT ensure that all resources are currently loaded, unlike the similar method
+    # ensure_fully_loaded! Loading all resources may be a side effect if loading has been
+    # delayed until now, but the dynamic loader might also be ble to replay them without
+    # fulling loading them.
+    def ensure_loading_is_activated!
+      return unless delay_loading?
+
+      @delay_loading = false
+      Rails.application.reload_routes!
     end
 
     # Returns ALL the files to be loaded
@@ -171,7 +207,20 @@ module ActiveAdmin
     #
     # @param rails_router [ActionDispatch::Routing::Mapper]
     def routes(rails_router)
-      loader.routes(rails_router)
+      # If loading is delayed, set up glob and root (for some reason glob doesn't
+      # work for root) routes that activate loading and then redirect back to the
+      # same URL.
+      if delay_loading?
+        activate_loading_and_redirect_proc = proc { |env|
+          ActiveAdmin.application.ensure_loading_is_activated!
+          [302, {'Location' => env["ORIGINAL_FULLPATH"] }, []]  # Rack redirect
+        }
+
+        rails_router.match "/", to: activate_loading_and_redirect_proc, via: :all
+        rails_router.match "*path", to: activate_loading_and_redirect_proc, via: :all
+      else
+        loader.routes(rails_router)
+      end
     end
 
     # Adds before, around and after filters to all controllers.
