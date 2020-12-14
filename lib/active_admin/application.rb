@@ -1,7 +1,8 @@
-require 'active_admin/router'
 require 'active_admin/reloader'
 require 'active_admin/application_settings'
 require 'active_admin/namespace_settings'
+require 'active_admin/dynamic_loader'
+require 'active_admin/standard_loader'
 
 module ActiveAdmin
   class Application
@@ -39,6 +40,9 @@ module ActiveAdmin
     end
 
     attr_reader :namespaces
+
+    delegate :load!, to: :loader
+
     def initialize
       @namespaces = Namespace::Store.new
     end
@@ -55,6 +59,25 @@ module ActiveAdmin
     BeforeLoadEvent = 'active_admin.application.before_load'.freeze
     AfterLoadEvent  = 'active_admin.application.after_load'.freeze
 
+    def publish_before_load_event_notification!
+      ActiveSupport::Notifications.publish BeforeLoadEvent, self
+    end
+
+    def publish_after_load_event_notification!
+      ActiveSupport::Notifications.publish AfterLoadEvent, self
+    end
+
+    def dynamic_loading_enabled?
+      return @dynamic_loading_enabled if defined? @dynamic_loading_enabled
+
+      @dynamic_loading_enabled = ENV["USE_AA_DYNAMIC_LOADING"].present? &&
+        (Rails.env.development? || Rails.env.test?)
+    end
+
+    def loader
+      @loader ||= dynamic_loading_enabled? ? DynamicLoader.new(self) : StandardLoader.new(self)
+    end
+
     # Runs before the app's AA initializer
     def setup!
       register_default_assets
@@ -63,7 +86,7 @@ module ActiveAdmin
     # Runs after the app's AA initializer
     def prepare!
       remove_active_admin_load_paths_from_rails_autoload_and_eager_load
-      attach_reloader
+      loader.attach_reloader
     end
 
     # Registers a brand new configuration for the given resource.
@@ -91,6 +114,11 @@ module ActiveAdmin
       namespace
     end
 
+    def initialize_default_namespace
+      # init AA resources
+      namespace(default_namespace)
+    end
+
     # Register a page
     #
     # @param name [String] The page name
@@ -107,6 +135,10 @@ module ActiveAdmin
       @@loaded ||= false
     end
 
+    def confirm_loaded!
+      @@loaded = true
+    end
+
     # Removes all defined controllers from memory. Useful in
     # development, where they are reloaded on each request.
     def unload!
@@ -114,25 +146,55 @@ module ActiveAdmin
       @@loaded = false
     end
 
-    # Loads all ruby files that are within the load_paths setting.
-    # To reload everything simply call `ActiveAdmin.unload!`
-    def load!
-      unless loaded?
-        ActiveSupport::Notifications.publish BeforeLoadEvent, self # before_load hook
-        files.each{ |file| load file }                             # load files
-        namespace(default_namespace)                               # init AA resources
-        ActiveSupport::Notifications.publish AfterLoadEvent, self  # after_load hook
-        @@loaded = true
-      end
+    # When using dynamic loading, this can be called to explicitly ensure everything is loaded.
+    # It might be used before poking into ActiveAdmin's resource configs, for instance.
+    #
+    # This method is similar but not the same as ensure_loading_is_activated! Calling
+    # ensure_fully_loaded! will make sure both routes and all resources are currently loaded.
+    # Calling ensure_loading_is_activated! will make sure only that routes are currently
+    # loaded, which may or may not require all resources to be loaded if the dynamic
+    # loader is being used.
+    def ensure_fully_loaded!
+      ensure_loading_is_activated!
+      load! unless loaded?
     end
 
-    def load(file)
-      DatabaseHitDuringLoad.capture{ super }
+    # When true, Active Admin does not load any files until loading is explicity
+    # activated with ensure_loading_is_activated! It will also set up a glob route in routes
+    # that activates loading with the first glob match.
+    def delay_loading?
+      return @delay_loading if defined? @delay_loading
+
+      @delay_loading = ENV["USE_AA_DELAYED_LOADING"].present? &&
+        (Rails.env.development? || Rails.env.test?)
+    end
+
+    # When loading is delayed, Active Admin does not load any files until loading is
+    # explicity activated with this method (or as a side effect of ensure_fully_loaded!).
+    # This method is called by the delayed loading route glob. It could also be called,
+    # for instance, before using any Active Admin url helpers if delayed loading is being
+    # used.
+    #
+    # It does NOT ensure that all resources are currently loaded, unlike the similar method
+    # ensure_fully_loaded! Loading all resources may be a side effect if loading has been
+    # delayed until now, but the dynamic loader might also be ble to replay them without
+    # fulling loading them.
+    def ensure_loading_is_activated!
+      return unless delay_loading?
+
+      @delay_loading = false
+      Rails.application.reload_routes!
     end
 
     # Returns ALL the files to be loaded
     def files
       load_paths.flatten.compact.uniq.flat_map{ |path| Dir["#{path}/**/*.rb"] }
+    end
+
+    # Used only with dynamic loader (does nothing for standard lodaer) to ensure
+    # that certain files are always loaded.
+    def ensure_always_loaded(*files)
+      loader.ensure_always_loaded(*files) if dynamic_loading_enabled?
     end
 
     # Creates all the necessary routes for the ActiveAdmin configurations
@@ -145,8 +207,20 @@ module ActiveAdmin
     #
     # @param rails_router [ActionDispatch::Routing::Mapper]
     def routes(rails_router)
-      load!
-      Router.new(router: rails_router, namespaces: namespaces).apply
+      # If loading is delayed, set up glob and root (for some reason glob doesn't
+      # work for root) routes that activate loading and then redirect back to the
+      # same URL.
+      if delay_loading?
+        activate_loading_and_redirect_proc = proc { |env|
+          ActiveAdmin.application.ensure_loading_is_activated!
+          [302, {'Location' => env["ORIGINAL_FULLPATH"] }, []]  # Rack redirect
+        }
+
+        rails_router.match "/", to: activate_loading_and_redirect_proc, via: :all
+        rails_router.match "*path", to: activate_loading_and_redirect_proc, via: :all
+      else
+        loader.routes(rails_router)
+      end
     end
 
     # Adds before, around and after filters to all controllers.
@@ -186,56 +260,5 @@ module ActiveAdmin
       Rails.application.config.eager_load_paths  -= load_paths
     end
 
-    # Hook into the Rails code reloading mechanism so that things are reloaded
-    # properly in development mode.
-    #
-    # If any of the app files (e.g. models) has changed, we need to reload all
-    # the admin files. If the admin files themselves has changed, we need to
-    # regenerate the routes as well.
-    def attach_reloader
-      Rails.application.config.after_initialize do |app|
-        unload_active_admin = -> { ActiveAdmin.application.unload! }
-
-        if app.config.reload_classes_only_on_change
-          # Rails is about to unload all the app files (e.g. models), so we
-          # should first unload the classes generated by Active Admin, otherwise
-          # they will contain references to the stale (unloaded) classes.
-          Reloader.to_prepare(prepend: true, &unload_active_admin)
-        else
-          # If the user has configured the app to always reload app files after
-          # each request, so we should unload the generated classes too.
-          Reloader.to_complete(&unload_active_admin)
-        end
-
-        admin_dirs = {}
-
-        load_paths.each do |path|
-          admin_dirs[path] = [:rb]
-        end
-
-        routes_reloader = app.config.file_watcher.new([], admin_dirs) do
-          app.reload_routes!
-        end
-
-        app.reloaders << routes_reloader
-
-        Reloader.to_prepare do
-          # Rails might have reloaded the routes for other reasons (e.g.
-          # routes.rb has changed), in which case Active Admin would have been
-          # loaded via the `ActiveAdmin.routes` call in `routes.rb`.
-          #
-          # Otherwise, we should check if any of the admin files are changed
-          # and force the routes to reload if necessary. This would again causes
-          # Active Admin to load via `ActiveAdmin.routes`.
-          #
-          # Finally, if Active Admin is still not loaded at this point, then we
-          # would need to load it manually.
-          unless ActiveAdmin.application.loaded?
-            routes_reloader.execute_if_updated
-            ActiveAdmin.application.load!
-          end
-        end
-      end
-    end
   end
 end

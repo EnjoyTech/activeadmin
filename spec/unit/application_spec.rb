@@ -17,6 +17,51 @@ RSpec.describe ActiveAdmin::Application do
     end
   end
 
+  describe "#dynamic_loading_enabled?" do
+    context "when dynamic loading ENV variable is set" do
+      it "should return true" do
+        allow(ENV).to receive(:[]).with("USE_AA_DYNAMIC_LOADING").and_return("true")
+        expect(application.dynamic_loading_enabled?).to be true
+      end
+    end
+
+    context "when dynamic loading ENV variable is not set" do
+      it "should return false" do
+        expect(application.dynamic_loading_enabled?).to be false
+      end
+    end
+  end
+
+  describe "#loader" do
+    context "when dynamic loading is enabled" do
+      it "should return a DynamicLoader" do
+        allow(application).to receive(:dynamic_loading_enabled?).and_return(true)
+        expect(application.loader).to be_a(ActiveAdmin::DynamicLoader)
+      end
+    end
+
+    context "when dynamic loading is not enabled" do
+      it "should return StandardLoad" do
+        expect(application.loader).to be_a(ActiveAdmin::StandardLoader)
+      end
+    end
+  end
+
+  describe "#delay_loading?" do
+    context "when delay loading ENV variable is set" do
+      it "should return true" do
+        allow(ENV).to receive(:[]).with("USE_AA_DELAYED_LOADING").and_return("true")
+        expect(application.delay_loading?).to be true
+      end
+    end
+
+    context "when delay loading ENV variable is not set" do
+      it "should return false" do
+        expect(application.delay_loading?).to be false
+      end
+    end
+  end
+
   it "should store the site's title" do
     expect(application.site_title).to eq ""
   end
